@@ -1,5 +1,6 @@
 import os
 import re
+import hmac
 import subprocess
 import tempfile
 import urllib.request
@@ -17,7 +18,7 @@ from pptx.oxml.ns import qn
 from lxml import etree
 
 # 画面最上部に表示する更新情報
-VERSION = "## Version-1 — 20260606 000000 更新 - Streamlit化／常時スプレッドシート取得／PDF出力／GCP対応"
+VERSION = "## Version-2 — 20260607 000000 更新 - 簡易ログイン機能を追加"
 
 # 設定変数
 
@@ -93,18 +94,26 @@ def get_date_col_range(target_date_str: str) -> str:
 
 # データ取得（常に最新スプレッドシート）
 
-def get_sheet_id() -> str:
-    """GOOGLE_SHEET_ID を 環境変数 -> .env の順で取得"""
-    sid = os.environ.get("GOOGLE_SHEET_ID", "")
-    if sid:
-        return sid
+def env_value(key: str, default: str = "") -> str:
+    """設定値を 環境変数 -> .env の順で取得"""
+    v = os.environ.get(key)
+    if v:
+        return v
     env_path = Path(__file__).parent / ".env"
     if env_path.exists():
         for line in env_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if line.startswith("GOOGLE_SHEET_ID") and "=" in line:
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return ""
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, val = line.split("=", 1)
+            if k.strip() == key:
+                return val.strip().strip('"').strip("'")
+    return default
+
+
+def get_sheet_id() -> str:
+    """GOOGLE_SHEET_ID を取得"""
+    return env_value("GOOGLE_SHEET_ID")
 
 
 def download_spreadsheet(dest_dir: str) -> Path:
@@ -329,13 +338,47 @@ def pptx_to_pdf(pptx_path: Path, out_dir: str) -> Path:
     return pdf
 
 
+# 簡易ログイン
+
+def check_login() -> bool:
+    """ログイン済みなら True。未ログインならログイン画面を表示して False を返す"""
+    if st.session_state.get("logged_in"):
+        return True
+
+    st.caption(VERSION)
+    st.title("ログイン")
+    user_correct = env_value("APP_USERNAME")
+    pw_correct = env_value("APP_PASSWORD")
+
+    in_user = st.text_input("ユーザー名")
+    in_pw = st.text_input("パスワード", type="password")
+
+    if st.button("ログイン", type="primary", use_container_width=True):
+        if not user_correct or not pw_correct:
+            st.error("認証情報（APP_USERNAME / APP_PASSWORD）が未設定です")
+        elif hmac.compare_digest(in_user, user_correct) and hmac.compare_digest(in_pw, pw_correct):
+            st.session_state["logged_in"] = True
+            st.rerun()
+        else:
+            st.error("ユーザー名またはパスワードが違います")
+    return False
+
+
 # Streamlit UI（スマホからボタン1つで実行）
 
 def main():
     st.set_page_config(page_title="トレーニング記録PDF生成", page_icon="🏋️")
+
+    if not check_login():
+        return
+
     st.caption(VERSION)
     st.title("トレーニング実施記録 PDF 生成")
     st.write("最新のスプレッドシートを取得し、選択した実施日の記録を PDF で出力します。")
+
+    if st.button("ログアウト"):
+        st.session_state["logged_in"] = False
+        st.rerun()
 
     target = st.date_input("実施日を選択", value=date.today())
 
