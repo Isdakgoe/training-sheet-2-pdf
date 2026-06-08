@@ -3,5 +3,4 @@ pandas
 openpyxl
 python-pptx
 lxml
-libreoffice-impress
 fonts-noto-cjk
