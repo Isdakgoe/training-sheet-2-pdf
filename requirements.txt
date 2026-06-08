@@ -3,4 +3,3 @@ pandas
 openpyxl
 python-pptx
 lxml
-fonts-noto-cjk
