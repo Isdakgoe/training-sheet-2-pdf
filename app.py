@@ -7,7 +7,6 @@ import urllib.request
 from pathlib import Path
 from datetime import date
 from collections import OrderedDict
-
 import pandas as pd
 import streamlit as st
 from pptx import Presentation
@@ -18,34 +17,31 @@ from pptx.oxml.ns import qn
 from lxml import etree
 
 # 画面最上部に表示する更新情報
-VERSION = "## Version-2 — 20260607 000000 更新 - 簡易ログイン機能を追加"
+VERSION = "## Version-3 — 20260714 223407 更新 - 更新情報をCAPTION形式・TOP中央配置に変更、除外選手の複数選択機能を追加"
+
+# 除外選手 複数選択の初期選択値
+DEFAULT_EXCLUDE_PLAYERS = ["#1宗山", "#13藤原", "##60 Waters"]
 
 # 設定変数
-
 # スライドサイズ
 SLIDE_W, SLIDE_H = Cm(33.87), Cm(19.05)
-
 # テーブル列幅 [種目, Set, Rep, 重量]
 COL_W = [Cm(5.66), Cm(1.31), Cm(1.31), Cm(2.61)]
 TABLE_W = sum(COL_W)
-
 # 配置
 COLS = 3
 MAX_PER_PAGE = 9
 MARGIN_L = Cm(0.35)
 COL_GAP = (SLIDE_W - MARGIN_L * 2 - TABLE_W * COLS) // (COLS - 1)
 ROW_Y = [Cm(1.65), Cm(7.13), Cm(12.76)]
-
 # 各パーツの高さ
 TOP_BAND_H = Cm(0.12)
 NAME_H = Cm(0.55)
 HDR_H = Cm(0.37)
 DATA_H = Cm(0.46)
-
 # セル内余白
 CELL_V = Cm(0.085)
 CELL_H = Cm(0.10)
-
 # 色（# なし 6桁 hex）
 C_RED = "DC143C"
 C_HDR_BG = "EEEEEE"
@@ -55,13 +51,11 @@ C_EVEN = "F2F2F2"
 C_BORDER = "CCCCCC"
 C_DATE = "BBBBBB"
 C_WHITE = "FFFFFF"
-
 # フォントサイズ (pt)
 FS_TITLE = 16
 FS_NAME = 10
 FS_TABLE = 6.5
 FS_DATE = 9
-
 # フォント。Linux(GCP)には Meiryo が無いため環境変数で差し替え可能にする
 # ローカルWindows: 既定の Meiryo / GCP(Cloud Run): Noto Sans CJK JP を環境変数で指定
 FONT = os.environ.get("PPTX_FONT", "Meiryo")
@@ -69,7 +63,6 @@ RECT = 1  # msoShapeRectangle
 
 
 # 列名・列範囲の計算
-
 def num_to_col_name(n: int) -> str:
     """1ベースの列番号をスプレッドシートのアルファベット列名に変換（1->A, 27->AA）"""
     name = ""
@@ -93,7 +86,6 @@ def get_date_col_range(target_date_str: str) -> str:
 
 
 # データ取得（常に最新スプレッドシート）
-
 def env_value(key: str, default: str = "") -> str:
     """設定値を 環境変数 -> .env の順で取得"""
     v = os.environ.get(key)
@@ -176,8 +168,20 @@ def df_to_players(df: pd.DataFrame) -> OrderedDict:
     return players
 
 
-# PPTX 描画
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_hash_tab_names(date_extract: str) -> list:
+    """該当日にデータがある「#」始まりのタブ名一覧を取得（多選択UI用・5分キャッシュ）"""
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            xlsx = download_spreadsheet(tmp)
+            df = extract_specific_date(xlsx, date_extract)
+    except RuntimeError:
+        return []
+    names = sorted(set(str(n).strip() for n in df["選手名"]))
+    return [n for n in names if n.startswith("#")]
 
+
+# PPTX 描画
 def rgb(h: str) -> RGBColor:
     return RGBColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
@@ -247,7 +251,6 @@ def _apply_cell(cell, bg: str, text, fs, bold=False, fg=C_HDR_FG, align=PP_ALIGN
     run.font.bold = bold
     run.font.color.rgb = rgb(fg)
     run.font.name = FONT
-
     # 空白セルのデフォルトフォント（Calibri 18pt）を上書き
     para_el = p._p
     for old in para_el.findall(qn("a:endParaRPr")):
@@ -264,20 +267,15 @@ def draw_player(slide, name, exercises, x, y):
     n_data = len(exercises)
     n_rows = 1 + n_data
     tbl_h = NAME_H + HDR_H + n_data * DATA_H
-
     table = slide.shapes.add_table(n_rows, 4, x, y, TABLE_W, tbl_h).table
-
     for ci, cw in enumerate(COL_W):
         table.columns[ci].width = cw
-
     table.rows[0].height = NAME_H
     for ri in range(1, n_rows):
         table.rows[ri].height = DATA_H
-
     # ヘッダー行（選手名 + 列見出し）
     for ci, hdr in enumerate([name, "Set", "Rep", "重量"]):
         _apply_cell(table.cell(0, ci), C_RED, hdr, FS_NAME, fg=C_WHITE, bold=True)
-
     # データ行
     aligns = [PP_ALIGN.LEFT, PP_ALIGN.CENTER, PP_ALIGN.CENTER, PP_ALIGN.LEFT]
     for ri, (item, sets, reps, weight) in enumerate(exercises):
@@ -285,7 +283,6 @@ def draw_player(slide, name, exercises, x, y):
         row = [item, fmt_num(sets), fmt_num(reps), fmt_num(weight)]
         for ci, (val, al) in enumerate(zip(row, aligns)):
             _apply_cell(table.cell(ri + 1, ci), bg, val, FS_TABLE, fg="1A1A1A", align=al)
-
     return tbl_h
 
 
@@ -294,13 +291,11 @@ def build_slide(prs, page_players, title_text, date_text):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     slide.background.fill.solid()
     slide.background.fill.fore_color.rgb = rgb("FFFFFF")
-
     solid_rect(slide, 0, 0, SLIDE_W, TOP_BAND_H, C_RED)
     add_text(slide, MARGIN_L, TOP_BAND_H, Cm(12), ROW_Y[0] - TOP_BAND_H,
              title_text, FS_TITLE, bold=True, color=C_RED, mt=Cm(0.25))
     add_text(slide, SLIDE_W - Cm(6), TOP_BAND_H, Cm(6) - MARGIN_L, ROW_Y[0] - TOP_BAND_H,
              date_text, FS_DATE, color=C_DATE, align=PP_ALIGN.RIGHT, mt=Cm(0.35))
-
     col_x = [MARGIN_L + i * (TABLE_W + COL_GAP) for i in range(COLS)]
     for idx, (name, exercises) in enumerate(page_players):
         draw_player(slide, name, exercises, col_x[idx % COLS], ROW_Y[idx // COLS])
@@ -313,12 +308,10 @@ def build_pptx(players_items, date_extract: str, out_dir: str) -> Path:
     today = date.today()
     title_text = f"{month}月{day}日 トレーニング実施記録"
     date_text = f"{today.year}/{today.month:02d}/{today.day:02d} Workout Log"
-
     prs = Presentation()
     prs.slide_width, prs.slide_height = SLIDE_W, SLIDE_H
     for i in range(0, len(players_items), MAX_PER_PAGE):
         build_slide(prs, players_items[i:i + MAX_PER_PAGE], title_text, date_text)
-
     out = Path(out_dir) / f"{month}月{day}日トレーニング実施記録.pptx"
     prs.save(str(out))
     return out
@@ -338,21 +331,26 @@ def pptx_to_pdf(pptx_path: Path, out_dir: str) -> Path:
     return pdf
 
 
-# 簡易ログイン
+# 更新情報表示（TOP中央・CAPTION形式）
+def render_version():
+    """更新情報をアプリ最上部に、小さく中央寄せで表示"""
+    st.markdown(
+        f"<div style='text-align:center; color:#888; font-size:0.8rem;'>{VERSION}</div>",
+        unsafe_allow_html=True,
+    )
 
+
+# 簡易ログイン
 def check_login() -> bool:
     """ログイン済みなら True。未ログインならログイン画面を表示して False を返す"""
     if st.session_state.get("logged_in"):
         return True
-
-    st.caption(VERSION)
+    render_version()
     st.title("ログイン")
     user_correct = env_value("APP_USERNAME")
     pw_correct = env_value("APP_PASSWORD")
-
     in_user = st.text_input("ユーザー名")
     in_pw = st.text_input("パスワード", type="password")
-
     if st.button("ログイン", type="primary", use_container_width=True):
         if not user_correct or not pw_correct:
             st.error("認証情報（APP_USERNAME / APP_PASSWORD）が未設定です")
@@ -365,31 +363,40 @@ def check_login() -> bool:
 
 
 # Streamlit UI（スマホからボタン1つで実行）
-
 def main():
     st.set_page_config(page_title="トレーニング記録PDF生成", page_icon="🏋️")
-
     if not check_login():
         return
-
-    st.caption(VERSION)
+    render_version()
     st.title("トレーニング実施記録 PDF 生成")
     st.write("最新のスプレッドシートを取得し、選択した実施日の記録を PDF で出力します。")
-
     if st.button("ログアウト"):
         st.session_state["logged_in"] = False
         st.rerun()
 
     target = st.date_input("実施日を選択", value=date.today())
+    date_extract = target.strftime("%m/%d")
+
+    # 該当日にデータがある「#」始まりのタブ名を取得し、除外選手として複数選択
+    hash_tab_names = fetch_hash_tab_names(date_extract)
+    default_exclude = [n for n in DEFAULT_EXCLUDE_PLAYERS if n in hash_tab_names]
+    exclude_players = st.multiselect(
+        "記載しない選手を選択",
+        options=hash_tab_names,
+        default=default_exclude,
+    )
 
     if st.button("PDFを生成", type="primary", use_container_width=True):
-        date_extract = target.strftime("%m/%d")
         try:
             with st.spinner("生成中…（スプレッドシート取得 → 集計 → PDF変換）"):
                 with tempfile.TemporaryDirectory() as tmp:
                     xlsx = download_spreadsheet(tmp)
                     df = extract_specific_date(xlsx, date_extract)
-                    players = list(df_to_players(df).items())
+                    players = [
+                        (name, exercises)
+                        for name, exercises in df_to_players(df).items()
+                        if name not in exclude_players
+                    ]
                     pptx = build_pptx(players, date_extract, tmp)
                     pdf = pptx_to_pdf(pptx, tmp)
                     pdf_bytes = pdf.read_bytes()
