@@ -20,7 +20,7 @@ from lxml import etree
 VERSION = "## Version-3 — 20260714 223407 更新 - 更新情報をCAPTION形式・TOP中央配置に変更、除外選手の複数選択機能を追加"
 
 # 除外選手 複数選択の初期選択値
-DEFAULT_EXCLUDE_PLAYERS = ["#1宗山", "#13藤原", "##60 Waters"]
+DEFAULT_EXCLUDE_PLAYERS = ["#1宗山", "#13藤原", "#60 Waters"]
 
 # 設定変数
 # スライドサイズ
