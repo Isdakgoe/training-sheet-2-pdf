@@ -17,10 +17,10 @@ from pptx.oxml.ns import qn
 from lxml import etree
 
 # 画面最上部に表示する更新情報
-VERSION = "## Version-3 — 20260714 223407 更新 - 更新情報をCAPTION形式・TOP中央配置に変更、除外選手の複数選択機能を追加"
+VERSION = "## Version-4 — 20260719 202839 更新 - 除外選手一覧とPDF生成のデータ取得元を一元化（選手一覧のズレを解消）"
 
 # 除外選手 複数選択の初期選択値
-DEFAULT_EXCLUDE_PLAYERS = ["#1 宗山", "#13 藤原", "#60 Waters"]
+DEFAULT_EXCLUDE_PLAYERS = ["#1宗山", "#13藤原", "##60 Waters"]
 
 # 設定変数
 # スライドサイズ
@@ -168,17 +168,14 @@ def df_to_players(df: pd.DataFrame) -> OrderedDict:
     return players
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def fetch_hash_tab_names(date_extract: str) -> list:
-    """該当日にデータがある「#」始まりのタブ名一覧を取得（多選択UI用・5分キャッシュ）"""
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            xlsx = download_spreadsheet(tmp)
-            df = extract_specific_date(xlsx, date_extract)
-    except RuntimeError:
-        return []
-    names = sorted(set(str(n).strip() for n in df["選手名"]))
-    return [n for n in names if n.startswith("#")]
+def fetch_date_df(date_extract: str) -> pd.DataFrame:
+    """該当日の全選手データを1回だけ取得する。
+    除外選手一覧の表示とPDF生成の両方でこの結果を使い回すことで、
+    取得タイミングのズレによる選手一覧の不整合を防ぐ。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        xlsx = download_spreadsheet(tmp)
+        return extract_specific_date(xlsx, date_extract)
 
 
 # PPTX 描画
@@ -377,8 +374,32 @@ def main():
     target = st.date_input("実施日を選択", value=date.today())
     date_extract = target.strftime("%m/%d")
 
-    # 該当日にデータがある「#」始まりのタブ名を取得し、除外選手として複数選択
-    hash_tab_names = fetch_hash_tab_names(date_extract)
+    # 日付が変わったら取得済みデータを破棄（再取得を促す）
+    if st.session_state.get("sheet_date") != date_extract:
+        st.session_state["sheet_date"] = date_extract
+        st.session_state["sheet_df"] = None
+        st.session_state["sheet_error"] = None
+
+    col_refresh, _ = st.columns([1, 3])
+    with col_refresh:
+        if st.button("選手データを取得・更新"):
+            st.session_state["sheet_df"] = None
+            st.session_state["sheet_error"] = None
+
+    if st.session_state.get("sheet_df") is None and st.session_state.get("sheet_error") is None:
+        try:
+            with st.spinner("スプレッドシートを取得中…"):
+                st.session_state["sheet_df"] = fetch_date_df(date_extract)
+        except RuntimeError as e:
+            st.session_state["sheet_error"] = str(e)
+
+    df = st.session_state.get("sheet_df")
+    if st.session_state.get("sheet_error"):
+        st.warning(st.session_state["sheet_error"])
+
+    # 除外選手一覧・PDF生成は同一の取得結果(df)を使う（一覧とPDFのズレを防止）
+    all_names = sorted(set(str(n).strip() for n in df["選手名"])) if df is not None else []
+    hash_tab_names = [n for n in all_names if n.startswith("#")]
     default_exclude = [n for n in DEFAULT_EXCLUDE_PLAYERS if n in hash_tab_names]
     exclude_players = st.multiselect(
         "記載しない選手を選択",
@@ -387,11 +408,12 @@ def main():
     )
 
     if st.button("PDFを生成", type="primary", use_container_width=True):
+        if df is None:
+            st.error("選手データが未取得です。「選手データを取得・更新」を押してください")
+            return
         try:
-            with st.spinner("生成中…（スプレッドシート取得 → 集計 → PDF変換）"):
+            with st.spinner("生成中…（集計 → PDF変換）"):
                 with tempfile.TemporaryDirectory() as tmp:
-                    xlsx = download_spreadsheet(tmp)
-                    df = extract_specific_date(xlsx, date_extract)
                     players = [
                         (name, exercises)
                         for name, exercises in df_to_players(df).items()
