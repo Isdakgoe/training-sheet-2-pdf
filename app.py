@@ -403,11 +403,11 @@ def main():
     # 除外選手一覧・PDF生成は同一の取得結果(df)を使う（一覧とPDFのズレを防止）
     all_names = sorted(set(str(n).strip() for n in df["選手名"])) if df is not None else []
     hash_tab_names = [n for n in all_names if n.startswith("#")]
-    default_exclude = [n for n in DEFAULT_EXCLUDE_PLAYERS if n in hash_tab_names]
+    # default_exclude = [n for n in DEFAULT_EXCLUDE_PLAYERS if n in hash_tab_names]
     exclude_players = st.multiselect(
         "記載しない選手を選択",
         options=hash_tab_names,
-        default=default_exclude,
+        # default=default_exclude,
     )
 
     if st.button("PDFを生成", type="primary", use_container_width=True):
