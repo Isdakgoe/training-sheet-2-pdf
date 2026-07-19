@@ -17,7 +17,7 @@ from pptx.oxml.ns import qn
 from lxml import etree
 
 # 画面最上部に表示する更新情報
-VERSION = "## Version-4 — 20260719 202839 更新 - 除外選手一覧とPDF生成のデータ取得元を一元化（選手一覧のズレを解消）"
+VERSION = "## Version-5 — 20260719 203558 更新 - データ抽出を「#」始まりタブに限定し、除外選手一覧とPDF内容を完全一致させた"
 
 # 除外選手 複数選択の初期選択値
 DEFAULT_EXCLUDE_PLAYERS = ["#1宗山", "#13藤原", "##60 Waters"]
@@ -133,6 +133,9 @@ def extract_specific_date(xlsx_path: Path, date_extract: str) -> pd.DataFrame:
     xls = pd.ExcelFile(xlsx_path)
     frames = []
     for sheet in xls.sheet_names:
+        if not sheet.startswith("#"):
+            # 選手タブは全て「#」始まりの命名。それ以外（テンプレート等）は対象外
+            continue
         try:
             df = pd.read_excel(xls, sheet_name=sheet, usecols=target_cols,
                                skiprows=2, nrows=99, header=None)
