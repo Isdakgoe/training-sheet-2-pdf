@@ -17,7 +17,7 @@ from pptx.oxml.ns import qn
 from lxml import etree
 
 # 画面最上部に表示する更新情報
-VERSION = "## Version-6 — 20260719 212704 更新 - データ抽出を全タブ対象に戻し、「#」フィルタは除外選択肢の絞り込みのみに限定"
+VERSION = "## Version-7 — 20260719 213553 更新 - 除外選手の選択肢を該当日の全選手（#の有無問わず）に変更"
 
 # 除外選手 複数選択の初期選択値
 DEFAULT_EXCLUDE_PLAYERS = ["#1宗山", "#13藤原", "##60 Waters"]
@@ -398,12 +398,12 @@ def main():
         st.warning(st.session_state["sheet_error"])
 
     # 除外選手一覧・PDF生成は同一の取得結果(df)を使う（一覧とPDFのズレを防止）
+    # 選択肢は該当日にデータがある全選手（# の有無を問わない）
     all_names = sorted(set(str(n).strip() for n in df["選手名"])) if df is not None else []
-    hash_tab_names = [n for n in all_names if n.startswith("#")]
-    default_exclude = [n for n in DEFAULT_EXCLUDE_PLAYERS if n in hash_tab_names]
+    default_exclude = [n for n in DEFAULT_EXCLUDE_PLAYERS if n in all_names]
     exclude_players = st.multiselect(
         "記載しない選手を選択",
-        options=hash_tab_names,
+        options=all_names,
         default=default_exclude,
     )
 
