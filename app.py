@@ -17,7 +17,7 @@ from pptx.oxml.ns import qn
 from lxml import etree
 
 # 画面最上部に表示する更新情報
-VERSION = "## Version-5 — 20260719 203558 更新 - データ抽出を「#」始まりタブに限定し、除外選手一覧とPDF内容を完全一致させた"
+VERSION = "## Version-6 — 20260719 212704 更新 - データ抽出を全タブ対象に戻し、「#」フィルタは除外選択肢の絞り込みのみに限定"
 
 # 除外選手 複数選択の初期選択値
 DEFAULT_EXCLUDE_PLAYERS = ["#1宗山", "#13藤原", "##60 Waters"]
@@ -133,9 +133,6 @@ def extract_specific_date(xlsx_path: Path, date_extract: str) -> pd.DataFrame:
     xls = pd.ExcelFile(xlsx_path)
     frames = []
     for sheet in xls.sheet_names:
-        if not sheet.startswith("#"):
-            # 選手タブは全て「#」始まりの命名。それ以外（テンプレート等）は対象外
-            continue
         try:
             df = pd.read_excel(xls, sheet_name=sheet, usecols=target_cols,
                                skiprows=2, nrows=99, header=None)
@@ -403,11 +400,11 @@ def main():
     # 除外選手一覧・PDF生成は同一の取得結果(df)を使う（一覧とPDFのズレを防止）
     all_names = sorted(set(str(n).strip() for n in df["選手名"])) if df is not None else []
     hash_tab_names = [n for n in all_names if n.startswith("#")]
-    # default_exclude = [n for n in DEFAULT_EXCLUDE_PLAYERS if n in hash_tab_names]
+    default_exclude = [n for n in DEFAULT_EXCLUDE_PLAYERS if n in hash_tab_names]
     exclude_players = st.multiselect(
         "記載しない選手を選択",
         options=hash_tab_names,
-        # default=default_exclude,
+        default=default_exclude,
     )
 
     if st.button("PDFを生成", type="primary", use_container_width=True):
