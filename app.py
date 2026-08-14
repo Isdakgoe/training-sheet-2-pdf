@@ -17,7 +17,7 @@ from pptx.oxml.ns import qn
 from lxml import etree
 
 # 画面最上部に表示する更新情報
-VERSION = "## Version-8 — 20260814 112531 更新 - テーブル列幅を調整（種目15%減・Rep15%増、表全体の幅は維持）"
+VERSION = "## Version-9 — 20260814 113038 更新 - テーブル列幅を調整（種目5%減、その分を重量列に加算、表全体の幅は維持）"
 
 # 除外選手 複数選択の初期選択値
 DEFAULT_EXCLUDE_PLAYERS = ["#1宗山", "#13藤原", "##60 Waters"]
@@ -26,7 +26,7 @@ DEFAULT_EXCLUDE_PLAYERS = ["#1宗山", "#13藤原", "##60 Waters"]
 # スライドサイズ
 SLIDE_W, SLIDE_H = Cm(33.87), Cm(19.05)
 # テーブル列幅 [種目, Set, Rep, 重量]
-COL_W = [Cm(4.81), Cm(1.31), Cm(2.16), Cm(2.61)]
+COL_W = [Cm(4.57), Cm(1.31), Cm(2.16), Cm(2.85)]
 TABLE_W = sum(COL_W)
 # 配置
 COLS = 3
