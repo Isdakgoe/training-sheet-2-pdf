@@ -26,7 +26,7 @@ DEFAULT_EXCLUDE_PLAYERS = ["#1宗山", "#13藤原", "##60 Waters"]
 # スライドサイズ
 SLIDE_W, SLIDE_H = Cm(33.87), Cm(19.05)
 # テーブル列幅 [種目, Set, Rep, 重量]
-COL_W = [Cm(5.66), Cm(1.31), Cm(1.31), Cm(2.61)]
+COL_W = [Cm(4.81), Cm(1.31), Cm(1.51), Cm(2.61)]
 TABLE_W = sum(COL_W)
 # 配置
 COLS = 3
