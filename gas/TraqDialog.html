@@ -137,8 +137,10 @@ google.script.run
 function onInit(data) {
   // 背番号順（タブ名の最初の数字）。1〜2桁 → 3桁（#022 など、#99 の後）→ 番号なし の順
   athletes = data.athletes.map(function (a) {
-    var m = norm(a.sheet).match(/\d+/);
-    a.num = !m ? Infinity : (m[0].length >= 3 ? 1000 : 0) + Number(m[0]);
+    // 「#」の直後の数字を背番号とみなす（前後の空白・全角＃・##60 のような重ね打ちは無視）
+    var s = norm(a.sheet);
+    var m = s.match(/#+\s*(\d+)/) || s.match(/(\d+)/);
+    a.num = !m ? Infinity : (m[1].length >= 3 ? 1000 : 0) + Number(m[1]);
     a.key = norm(a.sheet + ' ' + a.traqName).replace(/\s+/g, '');
     return a;
   }).sort(function (x, y) {
