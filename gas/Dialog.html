@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<base target="_top">
+<style>
+  :root {
+    --red: #DC143C;
+    --line: #DDDDDD;
+    --muted: #777777;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Meiryo', 'Noto Sans JP', sans-serif;
+    font-size: 13px;
+    margin: 0;
+    padding: 16px;
+    color: #1A1A1A;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  h2 {
+    font-size: 14px;
+    margin: 0 0 6px 0;
+    padding-left: 8px;
+    border-left: 3px solid var(--red);
+  }
+  .row { margin-bottom: 14px; }
+  select {
+    width: 100%;
+    padding: 6px;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  .listhead {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .linkbtn {
+    background: none;
+    border: none;
+    color: #1155CC;
+    cursor: pointer;
+    font-size: 11px;
+    font-family: inherit;
+    padding: 0 4px;
+  }
+  .linkbtn:hover { text-decoration: underline; }
+
+  #list {
+    flex: 1;
+    min-height: 120px;
+    overflow-y: auto;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 4px 0;
+  }
+  .item {
+    display: flex;
+    align-items: center;
+    padding: 4px 10px;
+  }
+  .item:hover { background: #F5F5F5; }
+  .item input { margin: 0 8px 0 0; flex: none; }
+  .item label { flex: 1; cursor: pointer; }
+  .item .cnt { color: var(--muted); font-size: 11px; flex: none; }
+  .item.off label { color: #AAAAAA; text-decoration: line-through; }
+
+  .foot { margin-top: 12px; flex: none; }
+  .chk { font-size: 12px; margin-bottom: 10px; display: block; }
+  button.primary {
+    width: 100%;
+    padding: 10px;
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: bold;
+    color: #FFFFFF;
+    background: var(--red);
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  button.primary:disabled { background: #CCCCCC; cursor: default; }
+
+  #msg { margin-top: 10px; font-size: 12px; line-height: 1.6; }
+  .err { color: #C00000; }
+  .warn { color: #B36B00; }
+  .ok a { color: #1155CC; font-weight: bold; }
+  .spin { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="row">
+  <div class="listhead">
+    <h2 style="margin:0; padding-left:8px; border-left:3px solid var(--red);">実施日</h2>
+    <button class="linkbtn" id="reload" onclick="reloadAll()" disabled>シートを読み直す</button>
+  </div>
+  <select id="date" disabled><option>読み込み中…</option></select>
+  <div class="sub" id="datesub">シートを読み込んでいます…</div>
+</div>
+
+<div class="listhead">
+  <h2 style="margin:0; padding-left:8px; border-left:3px solid var(--red);">掲載する選手</h2>
+  <div>
+    <button class="linkbtn" onclick="setAll(true)">すべて選択</button>
+    <button class="linkbtn" onclick="setAll(false)">すべて解除</button>
+  </div>
+</div>
+<div id="list"></div>
+<div class="sub" id="listsub">チェックを外した選手は PDF に載りません。</div>
+
+<div class="foot">
+  <label class="chk">
+    <input type="checkbox" id="savedef"> この選択を次回からの既定にする
+  </label>
+  <button class="primary" id="go" disabled onclick="generate()">PDFを作成</button>
+  <div id="msg"></div>
+</div>
+
+<script>
+var players = [];
+
+// ---- 起動 ----
+// 日付一覧と「既定日の選手一覧」をサーバー側で1回にまとめて取得する。
+// 以前は2回に分けて呼んでいたため、往復ぶんだけ待ち時間が増えていた。
+boot(false);
+
+function boot(forceRefresh) {
+  document.getElementById('date').disabled = true;
+  document.getElementById('reload').disabled = true;
+  document.getElementById('datesub').textContent =
+    forceRefresh ? 'シートを読み直しています…' : 'シートを読み込んでいます…';
+  document.getElementById('list').innerHTML =
+    '<div class="item spin">読み込み中…</div>';
+  google.script.run
+    .withSuccessHandler(onInit)
+    .withFailureHandler(fail)
+    .rptGetInitialData(forceRefresh);
+}
+
+function reloadAll() { boot(true); }
+
+function onInit(data) {
+  var sel = document.getElementById('date');
+  sel.innerHTML = '';
+  // 新しい日付が上に来るように逆順で並べる
+  for (var i = data.dates.length - 1; i >= 0; i--) {
+    var o = document.createElement('option');
+    o.value = data.dates[i];
+    o.textContent = data.dates[i];
+    if (data.dates[i] === data.defaultDate) o.selected = true;
+    sel.appendChild(o);
+  }
+  sel.disabled = false;
+  sel.onchange = loadPlayers;
+  document.getElementById('reload').disabled = false;
+
+  var note = data.dates.length + ' 日分を検出（' + (data.elapsedMs / 1000).toFixed(1) + '秒）';
+  if (!data.fast) {
+    note += ' ／ 拡張サービス「Google Sheets API」を追加すると高速になります';
+  }
+  document.getElementById('datesub').textContent = note;
+
+  // 既定日の選手一覧は同じ応答に入っているので、追加の往復は不要
+  onPlayers(data);
+}
+
+// ---- 選手一覧の読み込み（日付を変えたとき）----
+function loadPlayers() {
+  var list = document.getElementById('list');
+  list.innerHTML = '<div class="item spin">選手データを読み込み中…</div>';
+  document.getElementById('go').disabled = true;
+  setMsg('', '');
+  google.script.run
+    .withSuccessHandler(onPlayers)
+    .withFailureHandler(fail)
+    .rptGetPlayers(document.getElementById('date').value);
+}
+
+function onPlayers(data) {
+  players = data.players;
+  var list = document.getElementById('list');
+  list.innerHTML = '';
+
+  if (!players.length) {
+    list.innerHTML = '<div class="item spin">この日にデータのある選手がいません。</div>';
+    document.getElementById('listsub').textContent = '';
+    return;
+  }
+
+  players.forEach(function (p, i) {
+    var div = document.createElement('div');
+    div.className = 'item' + (p.excluded ? ' off' : '');
+    div.id = 'item' + i;
+
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = 'cb' + i;
+    cb.checked = !p.excluded;
+    cb.onchange = function () { refresh(); };
+
+    var lb = document.createElement('label');
+    lb.htmlFor = 'cb' + i;
+    lb.textContent = p.name;
+
+    var cnt = document.createElement('span');
+    cnt.className = 'cnt';
+    cnt.textContent = p.rows + ' 種目';
+
+    div.appendChild(cb);
+    div.appendChild(lb);
+    div.appendChild(cnt);
+    list.appendChild(div);
+  });
+
+  refresh();
+  document.getElementById('go').disabled = false;
+}
+
+// ---- 選択状態の表示更新 ----
+function refresh() {
+  var on = 0;
+  players.forEach(function (p, i) {
+    var checked = document.getElementById('cb' + i).checked;
+    document.getElementById('item' + i).className = 'item' + (checked ? '' : ' off');
+    if (checked) on++;
+  });
+  document.getElementById('listsub').textContent =
+    on + ' 名を掲載 / ' + (players.length - on) + ' 名を除外';
+  document.getElementById('go').disabled = (on === 0);
+}
+
+function setAll(v) {
+  players.forEach(function (p, i) { document.getElementById('cb' + i).checked = v; });
+  refresh();
+}
+
+// ---- PDF 作成 ----
+function generate() {
+  var exclude = [];
+  players.forEach(function (p, i) {
+    if (!document.getElementById('cb' + i).checked) exclude.push(p.name);
+  });
+
+  document.getElementById('go').disabled = true;
+  setMsg('spin', 'PDF を作成しています…（10秒ほどかかります）');
+
+  google.script.run
+    .withSuccessHandler(onDone)
+    .withFailureHandler(fail)
+    .rptGenerate(
+      document.getElementById('date').value,
+      exclude,
+      document.getElementById('savedef').checked
+    );
+}
+
+function onDone(r) {
+  document.getElementById('go').disabled = false;
+  var html = '<div class="ok">完成しました：' + r.playerCount + ' 名 / ' + r.pageCount + ' ページ' +
+    (r.excludedCount ? '（' + r.excludedCount + ' 名を除外）' : '') + '<br>' +
+    '<a href="' + r.url + '" target="_blank">' + escapeHtml(r.name) + ' を開く</a>' +
+    (r.replaced ? '<br><span class="spin">同じ日の古い PDF はゴミ箱へ移しました。</span>' : '') +
+    '</div>';
+  if (r.warnings && r.warnings.length) {
+    html += '<div class="warn">' + r.warnings.map(escapeHtml).join('<br>') + '</div>';
+  }
+  document.getElementById('msg').innerHTML = html;
+}
+
+function fail(e) {
+  document.getElementById('go').disabled = false;
+  document.getElementById('reload').disabled = false;
+  document.getElementById('list').innerHTML = '';
+  document.getElementById('datesub').textContent = '';
+  setMsg('err', (e && e.message) ? e.message : String(e));
+}
+
+function setMsg(cls, text) {
+  var m = document.getElementById('msg');
+  m.className = cls;
+  m.textContent = text;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+</script>
+</body>
+</html>
