@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<base target="_top">
+<style>
+  :root {
+    --red: #DC143C;
+    --line: #DDDDDD;
+    --muted: #777777;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Meiryo', 'Noto Sans JP', sans-serif;
+    font-size: 13px;
+    margin: 0;
+    padding: 16px;
+    color: #1A1A1A;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  h2 {
+    font-size: 14px;
+    margin: 0;
+    padding-left: 8px;
+    border-left: 3px solid var(--red);
+  }
+  .row { margin-bottom: 14px; }
+  input[type=date] {
+    width: 100%;
+    margin-top: 6px;
+    padding: 6px;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  .listhead {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .linkbtn {
+    background: none;
+    border: none;
+    color: #1155CC;
+    cursor: pointer;
+    font-size: 11px;
+    font-family: inherit;
+    padding: 0 4px;
+  }
+  .linkbtn:hover { text-decoration: underline; }
+
+  #list {
+    flex: 1;
+    min-height: 120px;
+    overflow-y: auto;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 4px 0;
+  }
+  .item {
+    display: flex;
+    align-items: center;
+    padding: 4px 10px;
+  }
+  .item:hover { background: #F5F5F5; }
+  .item input { margin: 0 8px 0 0; flex: none; }
+  .item label { flex: 1; cursor: pointer; }
+  .item .cnt { color: var(--muted); font-size: 11px; flex: none; }
+  .item.off label { color: #AAAAAA; }
+
+  .foot { margin-top: 12px; flex: none; }
+  button.primary {
+    width: 100%;
+    padding: 10px;
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: bold;
+    color: #FFFFFF;
+    background: var(--red);
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  button.primary:disabled { background: #CCCCCC; cursor: default; }
+
+  #msg { margin-top: 10px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; max-height: 180px; overflow-y: auto; }
+  .err { color: #C00000; }
+  .spin { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="row">
+  <h2>実施日</h2>
+  <input type="date" id="date" disabled>
+</div>
+
+<div class="listhead">
+  <h2>取り込む選手</h2>
+  <div>
+    <button class="linkbtn" onclick="setAll(true)">すべて選択</button>
+    <button class="linkbtn" onclick="setAll(false)">すべて解除</button>
+  </div>
+</div>
+<div id="list"><div class="item spin">読み込み中…</div></div>
+<div class="sub" id="listsub"></div>
+
+<div class="foot">
+  <button class="primary" id="go" disabled onclick="start()">TRAQ から取り込む</button>
+  <div id="msg"></div>
+</div>
+
+<script>
+var athletes = [];
+
+google.script.run
+  .withSuccessHandler(onInit)
+  .withFailureHandler(fail)
+  .trqGetDialogData();
+
+function onInit(data) {
+  athletes = data.athletes;
+  var d = document.getElementById('date');
+  d.value = data.today;
+  d.disabled = false;
+
+  var list = document.getElementById('list');
+  list.innerHTML = '';
+  if (!athletes.length) {
+    list.innerHTML = '<div class="item spin">「TRAQ設定」シートの C列（転載先タブ）が入っている選手がいません。</div>';
+    return;
+  }
+
+  athletes.forEach(function (a, i) {
+    var div = document.createElement('div');
+    div.className = 'item';
+    div.id = 'item' + i;
+
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = 'cb' + i;
+    cb.checked = a.checked;
+    cb.onchange = refresh;
+
+    var lb = document.createElement('label');
+    lb.htmlFor = 'cb' + i;
+    lb.textContent = a.sheet;
+
+    var cnt = document.createElement('span');
+    cnt.className = 'cnt';
+    cnt.textContent = a.traqName + '（' + a.id + '）';
+
+    div.appendChild(cb);
+    div.appendChild(lb);
+    div.appendChild(cnt);
+    list.appendChild(div);
+  });
+
+  if (data.unmapped) {
+    document.getElementById('listsub').dataset.extra =
+      '転載先タブ未設定の ' + data.unmapped + ' 人は表示していません。';
+  }
+  refresh();
+}
+
+function selectedIds() {
+  return athletes.filter(function (a, i) {
+    return document.getElementById('cb' + i).checked;
+  }).map(function (a) { return a.id; });
+}
+
+function refresh() {
+  var on = 0;
+  athletes.forEach(function (a, i) {
+    var c = document.getElementById('cb' + i).checked;
+    document.getElementById('item' + i).className = 'item' + (c ? '' : ' off');
+    if (c) on++;
+  });
+  var sub = document.getElementById('listsub');
+  sub.textContent = on + ' 名を選択中' + (sub.dataset.extra ? ' ／ ' + sub.dataset.extra : '');
+  document.getElementById('go').disabled = (on === 0);
+}
+
+function setAll(v) {
+  athletes.forEach(function (a, i) { document.getElementById('cb' + i).checked = v; });
+  refresh();
+}
+
+// ---- 取り込み：先に上書き対象を調べ、あれば確認してから実行する ----
+function start() {
+  var date = document.getElementById('date').value;
+  if (!date) { setMsg('err', '日付を選んでください。'); return; }
+  var ids = selectedIds();
+
+  busy(true, '既存データを確認しています…');
+  google.script.run
+    .withSuccessHandler(function (filled) {
+      var overwrite = true;
+      if (filled.length) {
+        overwrite = confirm('この日は既にデータが入っているタブがあります:\n  ' + filled.join('、') +
+          '\n\nOK … TRAQ の内容で上書きする\nキャンセル … これらのタブは飛ばす');
+      }
+      busy(true, 'TRAQ から取得してシートに書き込んでいます…（' + ids.length + ' 名）');
+      google.script.run
+        .withSuccessHandler(function (report) { busy(false); setMsg('', report); })
+        .withFailureHandler(fail)
+        .trqRunImport(date, ids, overwrite);
+    })
+    .withFailureHandler(fail)
+    .trqCheckExisting(date, ids);
+}
+
+function busy(on, text) {
+  document.getElementById('go').disabled = on;
+  if (text) setMsg('spin', text);
+}
+
+function fail(e) {
+  busy(false);
+  setMsg('err', (e && e.message) ? e.message : String(e));
+}
+
+function setMsg(cls, text) {
+  var m = document.getElementById('msg');
+  m.className = cls;
+  m.textContent = text;
+}
+</script>
+</body>
+</html>

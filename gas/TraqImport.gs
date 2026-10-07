@@ -13,8 +13,13 @@
  * ■ 初回の準備
  *   1. メニュー「TRAQ取り込み」→「ログイン情報を設定」で TRAQ のメールとパスワードを保存
  *      （ユーザープロパティに保存されるので、他の編集者からは見えません）
- *   2. メニュー「TRAQ取り込み」→「選手IDの対応表を作成/更新」で「TRAQ設定」シートを作り、
- *      B列に各選手の TRAQ の ID（または athletes/view/124653 の URL）を貼る
+ *   2. メニュー「TRAQ取り込み」→「TRAQの選手一覧を取得」で「TRAQ設定」シートを作る。
+ *      A列 TRAQ の選手名 / B列 TRAQ の選手ID は TRAQ の Athletes 一覧から自動で入ります。
+ *   3. C列（転載先タブ）をプルダウンから選ぶ。C列が空の選手は取り込みの対象外です。
+ *
+ * ■ 取り込み
+ *   メニュー「TRAQから取り込む…」→ ダイアログで日付と選手（複数選択）を選んで実行。
+ *   選んだ選手ごとに B列の ID のページを開き、取得したデータを C列のタブへ書きます。
  *
  * ■ 転記ルール
  *   種目   … Exercise をそのまま
@@ -48,9 +53,9 @@ var TRQ_CFG = {
 function trqBuildMenu_() {
   SpreadsheetApp.getUi()
     .createMenu('TRAQ取り込み')
-    .addItem('TRAQから取り込む…', 'trqImportPrompt')
+    .addItem('TRAQから取り込む…', 'trqShowDialog')
     .addSeparator()
-    .addItem('選手IDの対応表を作成/更新', 'trqSetupMapSheet')
+    .addItem('TRAQの選手一覧を取得', 'trqSyncAthletes')
     .addItem('ログイン情報を設定', 'trqSetCredentials')
     .addItem('毎日の自動取り込みを ON/OFF', 'trqToggleDailyTrigger')
     .addToUi();
@@ -58,56 +63,94 @@ function trqBuildMenu_() {
 
 
 /** メニュー「TRAQから取り込む…」 */
-function trqImportPrompt() {
-  var ui = SpreadsheetApp.getUi();
-  var today = new Date();
-  var todayLabel = (today.getMonth() + 1) + '月' + today.getDate() + '日';
-
-  var res = ui.prompt('TRAQから取り込む',
-    '取り込む日付を入力してください（例: 10/7、10月7日）。\n空欄のままOKで今日（' + todayLabel + '）を取り込みます。',
-    ui.ButtonSet.OK_CANCEL);
-  if (res.getSelectedButton() !== ui.Button.OK) return;
-
-  var date = trq_parseInputDate_(res.getResponseText(), today);
-  if (!date) {
-    ui.alert('日付が読み取れませんでした: ' + res.getResponseText());
-    return;
-  }
-
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  ss.toast('TRAQ からデータを取得しています…', 'TRAQ取り込み', -1);
-  var fetched = trq_fetchAll_(ss, date);
-
-  // 既に何か書かれている選手は、上書きしてよいか確認する
-  var dateKey = trq_dateKey_(date);
-  var filled = fetched.results.filter(function (r) {
-    return r.rows && r.rows.length && trq_hasExistingData_(ss, r.sheet, dateKey);
-  }).map(function (r) { return r.sheet; });
-
-  var overwrite = true;
-  if (filled.length) {
-    var ans = ui.alert('上書きの確認',
-      dateKey + ' に既にデータが入っている選手がいます:\n  ' + filled.join('、') +
-      '\n\nTRAQ の内容で上書きしますか？\n（「いいえ」ならその選手は飛ばします）',
-      ui.ButtonSet.YES_NO_CANCEL);
-    if (ans === ui.Button.CANCEL || ans === ui.Button.CLOSE) { ss.toast('中止しました', 'TRAQ取り込み'); return; }
-    overwrite = (ans === ui.Button.YES);
-  }
-
-  var report = trq_writeAll_(ss, dateKey, fetched, overwrite);
-  ss.toast('完了しました', 'TRAQ取り込み', 3);
-  ui.alert('TRAQ取り込み（' + dateKey + '）', report, ui.ButtonSet.OK);
+function trqShowDialog() {
+  var html = HtmlService.createHtmlOutputFromFile('TraqDialog')
+    .setWidth(480)
+    .setHeight(640);
+  SpreadsheetApp.getUi().showModalDialog(html, 'TRAQ から取り込む');
 }
 
 
-/** 時間主導トリガーから呼ばれる。今日の分を取り込み、既にデータがある選手は上書きしない */
+/** 時間主導トリガーから呼ばれる。C列のある全選手の今日の分を取り込み、既にデータがある選手は上書きしない */
 function trqImportScheduled() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var date = new Date();
-  var fetched = trq_fetchAll_(ss, date);
+  var map = trq_readMap_(ss).filter(function (m) { return m.sheet; });
+  var fetched = trq_fetchAll_(ss, date, map);
   var report = trq_writeAll_(ss, trq_dateKey_(date), fetched, false);
   console.log(report);
 }
+
+
+// =====================================================================
+// ダイアログ（TraqDialog.html）から google.script.run で呼ばれる関数
+// =====================================================================
+
+/** ダイアログを開いた直後に呼ばれる。今日の日付と、選べる選手（C列が入っている行）を返す */
+function trqGetDialogData() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var map = trq_readMap_(ss);
+  if (!map.length) {
+    throw new Error('「' + TRQ_CFG.MAP_SHEET + '」シートに選手がいません。' +
+                    'メニューの「TRAQの選手一覧を取得」を先に実行してください。');
+  }
+  // 前回選んだ選手を覚えておき、次回の既定にする
+  var last = PropertiesService.getUserProperties().getProperty('TRAQ_LAST_SELECTED');
+  var lastIds = last ? last.split(',') : null;
+
+  var mapped = map.filter(function (m) { return m.sheet; });
+  return {
+    today: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+    athletes: mapped.map(function (m) {
+      return {
+        id: m.athleteId,
+        traqName: m.traqName,
+        sheet: m.sheet,
+        checked: lastIds ? lastIds.indexOf(m.athleteId) >= 0 : true
+      };
+    }),
+    unmapped: map.length - mapped.length
+  };
+}
+
+
+/** 選ばれた選手のうち、その日に既にデータが入っている転載先タブを返す（上書き確認用） */
+function trqCheckExisting(dateStr, ids) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var dateKey = trq_dateKey_(trq_requireDate_(dateStr));
+  var seen = {};
+  return trq_selectMap_(ss, ids).filter(function (m) {
+    if (seen[m.sheet]) return false;
+    seen[m.sheet] = true;
+    return trq_hasExistingData_(ss, m.sheet, dateKey);
+  }).map(function (m) { return m.sheet; });
+}
+
+
+/** 「取り込む」ボタンの本体。結果報告の文字列を返す */
+function trqRunImport(dateStr, ids, overwrite) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var date = trq_requireDate_(dateStr);
+  var map = trq_selectMap_(ss, ids);
+  if (!map.length) throw new Error('取り込む選手が選ばれていません。');
+
+  PropertiesService.getUserProperties().setProperty('TRAQ_LAST_SELECTED', ids.join(','));
+
+  var fetched = trq_fetchAll_(ss, date, map);
+  return trq_writeAll_(ss, trq_dateKey_(date), fetched, overwrite);
+}
+
+
+function trq_requireDate_(dateStr) {
+  var date = trq_parseInputDate_(dateStr, new Date());
+  if (!date) throw new Error('日付が読み取れませんでした: ' + dateStr);
+  return date;
+}
+
+
+// =====================================================================
+// メニューの各機能
+// =====================================================================
 
 
 /** メニュー「ログイン情報を設定」 */
@@ -133,32 +176,51 @@ function trqSetCredentials() {
 }
 
 
-/** メニュー「選手IDの対応表を作成/更新」 */
-function trqSetupMapSheet() {
+/**
+ * メニュー「TRAQの選手一覧を取得」
+ * TRAQ の Athletes 一覧（全ページ）から選手名と ID を拾い、「TRAQ設定」シートの A・B 列に入れる。
+ * 既にいる選手は C列（転載先タブ）を残したまま名前だけ更新し、新しい選手は末尾に足す。
+ */
+function trqSyncAthletes() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+  ss.toast('TRAQ の選手一覧を取得しています…', 'TRAQ取り込み', -1);
+
+  var athletes = trq_fetchAthleteList_(trq_login_());
+  if (!athletes.length) throw new Error('TRAQ の選手一覧から選手を1人も読み取れませんでした。');
+
   var sh = ss.getSheetByName(TRQ_CFG.MAP_SHEET);
   if (!sh) {
     sh = ss.insertSheet(TRQ_CFG.MAP_SHEET);
-    sh.getRange(1, 1, 1, 3).setValues([['選手シート名', 'TRAQ 選手ID（または URL）', 'メモ']])
+    sh.getRange(1, 1, 1, 3).setValues([['TRAQ 選手名', 'TRAQ 選手ID', '転載先タブ']])
       .setFontWeight('bold');
     sh.setFrozenRows(1);
-    sh.setColumnWidth(1, 180);
-    sh.setColumnWidth(2, 320);
+    sh.setColumnWidth(1, 200);
+    sh.setColumnWidth(2, 110);
+    sh.setColumnWidth(3, 180);
   }
 
-  // 日付行がある＝選手シート（Code.gs の索引をそのまま使う）
-  var idx = rpt_loadIndex_(true);
-  var have = trq_readMap_(ss, true).map(function (m) { return m.sheet; });
-  var add = idx.sheets
-    .map(function (s) { return s.name; })
-    .filter(function (n) { return have.indexOf(n) < 0; })
-    .map(function (n) { return [n, '', '']; });
+  var rowOf = {};
+  trq_readMap_(ss).forEach(function (m) { rowOf[m.athleteId] = m.row; });
 
-  if (add.length) sh.getRange(sh.getLastRow() + 1, 1, add.length, 3).setValues(add);
+  var append = [];
+  athletes.forEach(function (a) {
+    if (rowOf[a.id]) sh.getRange(rowOf[a.id], 1).setValue(a.name);
+    else append.push([a.name, a.id]);
+  });
+  if (append.length) sh.getRange(sh.getLastRow() + 1, 1, append.length, 2).setValues(append);
+
+  // C列は選手タブ名のプルダウンにする（日付行がある＝選手タブ。Code.gs の索引を流用）
+  var tabs = rpt_loadIndex_(true).sheets.map(function (s) { return s.name; });
+  if (tabs.length && sh.getLastRow() >= 2) {
+    sh.getRange(2, 3, sh.getLastRow() - 1, 1).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(tabs, true).setAllowInvalid(false).build());
+  }
+
   ss.setActiveSheet(sh);
+  ss.toast('完了しました', 'TRAQ取り込み', 3);
   SpreadsheetApp.getUi().alert(
-    (add.length ? add.length + ' 人を追加しました。' : '追加する選手はいませんでした。') +
-    '\nB列に TRAQ の選手ID（例: 124653）か、選手ページの URL を貼ってください。\n空欄の選手は取り込みの対象外になります。');
+    'TRAQ の選手 ' + athletes.length + ' 人を確認しました（新規 ' + append.length + ' 人）。\n' +
+    'C列（転載先タブ）をプルダウンから選んでください。C列が空の選手は取り込みの対象外です。');
 }
 
 
@@ -178,7 +240,7 @@ function trqToggleDailyTrigger() {
   ScriptApp.newTrigger('trqImportScheduled')
     .timeBased().everyDays(1).atHour(TRQ_CFG.DAILY_HOUR).create();
   ui.alert('毎日の自動取り込みを ON にしました。\n' +
-    '毎日 ' + TRQ_CFG.DAILY_HOUR + '時台に、その日の分を取り込みます' +
+    '毎日 ' + TRQ_CFG.DAILY_HOUR + '時台に、C列が入っている全選手のその日の分を取り込みます' +
     '（既にデータがある選手は上書きしません）。');
 }
 
@@ -188,14 +250,13 @@ function trqToggleDailyTrigger() {
 // =====================================================================
 
 /**
- * 対応表の全選手について、指定日のトレーニングを TRAQ から取得する。
+ * 指定した選手について、指定日のトレーニングを TRAQ から取得する。
+ * map: [{ athleteId, traqName, sheet }]（sheet ＝ 転載先タブ）
  * 戻り値: { results: [{ sheet, rows: [[種目, セット, レップ, 重量], ...] | null, note }] }
  */
-function trq_fetchAll_(ss, date) {
-  var map = trq_readMap_(ss, false);
+function trq_fetchAll_(ss, date, map) {
   if (!map.length) {
-    throw new Error('「' + TRQ_CFG.MAP_SHEET + '」シートに TRAQ の選手IDが1件もありません。' +
-                    'メニューの「選手IDの対応表を作成/更新」から設定してください。');
+    throw new Error('取り込める選手がいません。「' + TRQ_CFG.MAP_SHEET + '」シートの C列（転載先タブ）を設定してください。');
   }
 
   var cookies = trq_login_();
@@ -525,19 +586,58 @@ function trq_hasExistingData_(ss, sheetName, dateKey) {
 // 対応表・日付
 // =====================================================================
 
-/** 「TRAQ設定」シートを読む。includeBlank=false なら ID 未入力の行は除く */
-function trq_readMap_(ss, includeBlank) {
+/**
+ * 「TRAQ設定」シートを読む。B列に ID がある行だけ返す（C列は空のこともある）。
+ * 戻り値: [{ traqName, athleteId, sheet, row }]
+ */
+function trq_readMap_(ss) {
   var sh = ss.getSheetByName(TRQ_CFG.MAP_SHEET);
   if (!sh || sh.getLastRow() < 2) return [];
-  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, 2).getDisplayValues();
+  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getDisplayValues();
   var out = [];
-  vals.forEach(function (v) {
-    var name = String(v[0]).trim();
-    if (!name) return;
+  vals.forEach(function (v, i) {
     var m = String(v[1]).match(/(?:athletes\/view\/)?(\d+)\s*$/);
-    if (!m && !includeBlank) return;
-    out.push({ sheet: name, athleteId: m ? m[1] : '' });
+    if (!m) return;
+    out.push({ traqName: String(v[0]).trim(), athleteId: m[1], sheet: String(v[2]).trim(), row: i + 2 });
   });
+  return out;
+}
+
+
+/** ダイアログで選ばれた ID のうち C列が入っている行を、シートの並び順で返す */
+function trq_selectMap_(ss, ids) {
+  ids = (ids || []).map(String);
+  return trq_readMap_(ss).filter(function (m) {
+    return m.sheet && ids.indexOf(m.athleteId) >= 0;
+  });
+}
+
+
+/** TRAQ の Athletes 一覧を全ページ読み、[{ id, name }] を返す */
+function trq_fetchAthleteList_(cookies) {
+  var out = [];
+  var seen = {};
+  for (var page = 1; page <= 30; page++) {
+    var res = UrlFetchApp.fetch(
+      TRQ_CFG.BASE_URL + '/athletes?view=table&location=athletes.index&page=' + page,
+      { headers: { Cookie: cookies }, followRedirects: false, muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) break;
+
+    var html = res.getContentText();
+    var re = /<tr class="userRow-(\d+)">([\s\S]*?)<\/tr>/g;
+    var m, added = 0;
+    while ((m = re.exec(html)) !== null) {
+      if (seen[m[1]]) continue;
+      seen[m[1]] = true;
+      // 名と姓が別々のリンクになっている
+      var names = [];
+      var nr = /data-athlete-profile-link[^>]*>([\s\S]*?)<\/a>/g, n;
+      while ((n = nr.exec(m[2])) !== null) names.push(trq_text_(n[1]));
+      out.push({ id: m[1], name: names.join(' ') });
+      added++;
+    }
+    if (!added) break;                                    // 最終ページを過ぎた
+  }
   return out;
 }
 
