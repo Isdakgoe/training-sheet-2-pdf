@@ -94,10 +94,6 @@ function trqGetDialogData() {
     throw new Error('「' + TRQ_CFG.MAP_SHEET + '」シートに選手がいません。' +
                     'メニューの「TRAQの選手一覧を取得」を先に実行してください。');
   }
-  // 前回選んだ選手を覚えておき、次回の既定にする
-  var last = PropertiesService.getUserProperties().getProperty('TRAQ_LAST_SELECTED');
-  var lastIds = last ? last.split(',') : null;
-
   var mapped = map.filter(function (m) { return m.sheet; });
   return {
     today: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'),
@@ -106,7 +102,7 @@ function trqGetDialogData() {
         id: m.athleteId,
         traqName: m.traqName,
         sheet: m.sheet,
-        checked: lastIds ? lastIds.indexOf(m.athleteId) >= 0 : true
+        checked: false   // 既定は全解除。取り込む選手だけチェックしてもらう
       };
     }),
     unmapped: map.length - mapped.length
@@ -133,8 +129,6 @@ function trqRunImport(dateStr, ids, overwrite) {
   var date = trq_requireDate_(dateStr);
   var map = trq_selectMap_(ss, ids);
   if (!map.length) throw new Error('取り込む選手が選ばれていません。');
-
-  PropertiesService.getUserProperties().setProperty('TRAQ_LAST_SELECTED', ids.join(','));
 
   var fetched = trq_fetchAll_(ss, date, map);
   return trq_writeAll_(ss, trq_dateKey_(date), fetched, overwrite);
