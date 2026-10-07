@@ -71,6 +71,17 @@
   .item label { flex: 1; cursor: pointer; }
   .item .cnt { color: var(--muted); font-size: 11px; flex: none; }
   .item.off label { color: #AAAAAA; }
+  .item.hidden { display: none; }
+
+  #q {
+    width: 100%;
+    margin-bottom: 6px;
+    padding: 6px 8px;
+    font-size: 13px;
+    font-family: inherit;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+  }
 
   .foot { margin-top: 12px; flex: none; }
   button.primary {
@@ -106,6 +117,7 @@
     <button class="linkbtn" onclick="setAll(false)">すべて解除</button>
   </div>
 </div>
+<input type="search" id="q" placeholder="名前・背番号で絞り込み（例: 水、2、Ito）" oninput="applyFilter()" disabled>
 <div id="list"><div class="item spin">読み込み中…</div></div>
 <div class="sub" id="listsub"></div>
 
@@ -123,7 +135,16 @@ google.script.run
   .trqGetDialogData();
 
 function onInit(data) {
-  athletes = data.athletes;
+  // 背番号順（タブ名の最初の数字）。番号が無い選手は末尾に名前順で並べる
+  athletes = data.athletes.map(function (a) {
+    var m = norm(a.sheet).match(/\d+/);
+    a.num = m ? Number(m[0]) : Infinity;
+    a.key = norm(a.sheet + ' ' + a.traqName).replace(/\s+/g, '');
+    return a;
+  }).sort(function (x, y) {
+    if (x.num !== y.num) return x.num < y.num ? -1 : 1;
+    return x.sheet.localeCompare(y.sheet, 'ja');
+  });
   var d = document.getElementById('date');
   d.value = data.today;
   d.disabled = false;
@@ -159,6 +180,8 @@ function onInit(data) {
     div.appendChild(cnt);
     list.appendChild(div);
   });
+  document.getElementById('q').disabled = false;
+  document.getElementById('q').focus();
 
   if (data.unmapped) {
     document.getElementById('listsub').dataset.extra =
@@ -177,17 +200,39 @@ function refresh() {
   var on = 0;
   athletes.forEach(function (a, i) {
     var c = document.getElementById('cb' + i).checked;
-    document.getElementById('item' + i).className = 'item' + (c ? '' : ' off');
+    document.getElementById('item' + i).classList.toggle('off', !c);
     if (c) on++;
   });
+  var shown = athletes.filter(function (a) { return !a.hidden; }).length;
   var sub = document.getElementById('listsub');
-  sub.textContent = on + ' 名を選択中' + (sub.dataset.extra ? ' ／ ' + sub.dataset.extra : '');
+  sub.textContent = on + ' 名を選択中' +
+    (shown < athletes.length ? '（' + shown + ' / ' + athletes.length + ' 名を表示中）' : '') +
+    (sub.dataset.extra ? ' ／ ' + sub.dataset.extra : '');
   document.getElementById('go').disabled = (on === 0);
 }
 
+// 絞り込み中は、表示されている選手だけを対象にする
 function setAll(v) {
-  athletes.forEach(function (a, i) { document.getElementById('cb' + i).checked = v; });
+  athletes.forEach(function (a, i) {
+    if (!a.hidden) document.getElementById('cb' + i).checked = v;
+  });
   refresh();
+}
+
+// ---- 検索：タブ名・TRAQ名の部分一致（全角/半角・大文字/小文字・空白は区別しない）----
+// 例: 「#022 水上」は「水」「2」「022」「水上」のどれでも出る
+function applyFilter() {
+  var q = norm(document.getElementById('q').value).replace(/\s+/g, '');
+  athletes.forEach(function (a, i) {
+    a.hidden = q !== '' && a.key.indexOf(q) < 0;
+    document.getElementById('item' + i).classList.toggle('hidden', a.hidden);
+  });
+  refresh();
+}
+
+function norm(s) {
+  s = String(s);
+  return (s.normalize ? s.normalize('NFKC') : s).toLowerCase();
 }
 
 // ---- 取り込み：先に上書き対象を調べ、あれば確認してから実行する ----
@@ -215,7 +260,8 @@ function start() {
 }
 
 function busy(on, text) {
-  document.getElementById('go').disabled = on;
+  if (on) document.getElementById('go').disabled = true;
+  else refresh();                                         // 選択0名なら押せないまま
   if (text) setMsg('spin', text);
 }
 
