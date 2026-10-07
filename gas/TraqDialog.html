@@ -135,10 +135,10 @@ google.script.run
   .trqGetDialogData();
 
 function onInit(data) {
-  // 背番号順（タブ名の最初の数字）。番号が無い選手は末尾に名前順で並べる
+  // 背番号順（タブ名の最初の数字）。1〜2桁 → 3桁（#022 など、#99 の後）→ 番号なし の順
   athletes = data.athletes.map(function (a) {
     var m = norm(a.sheet).match(/\d+/);
-    a.num = m ? Number(m[0]) : Infinity;
+    a.num = !m ? Infinity : (m[0].length >= 3 ? 1000 : 0) + Number(m[0]);
     a.key = norm(a.sheet + ' ' + a.traqName).replace(/\s+/g, '');
     return a;
   }).sort(function (x, y) {
