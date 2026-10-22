@@ -24,7 +24,7 @@
  *   選んだ選手ごとに B列の ID のカレンダーを開き、取得したデータを C列のタブへ書きます。
  *
  * ■ 毎朝の自動取り込み（メニュー「毎日の自動取り込みを ON/OFF」）
- *   毎朝 MORNING_HOUR 時台に「前日」、毎夕 EVENING_HOUR 時台に「当日」の分を取り込みます。既にデータがある日付列は上書きしません。
+ *   毎朝 MORNING_HOUR 時台に「前日」、毎夕 EVENING_HOUR 時台に「当日」の分を取り込みます。既にデータがある日付列も TRAQ の内容で上書きします（夕方の途中入力を翌朝に更新するため）。
  *   TRAQ の全選手のカレンダーを見て、前日に入力がある選手だけを対象にします。
  *   次の場合はその選手を書かずにエラーとして残します:
  *     - 「TRAQ設定」に載っていない選手 … 「TRAQ設定」の末尾に名前と ID を追加（C列は空）
@@ -101,7 +101,7 @@ function trqImportEvening() { trqRunScheduled_(0); }
 
 
 /**
- * daysAgo 日前に TRAQ へ入力がある選手だけを取り込み、既にデータがある選手は上書きしない。
+ * daysAgo 日前に TRAQ へ入力がある選手だけを取り込み、既にデータがある選手も TRAQ の内容で上書きする。
  * 画面が無いので結果は「TRAQ取り込みログ」シートに書き、エラーは次にシートを開いたときに知らせる。
  */
 function trqRunScheduled_(daysAgo) {
@@ -164,7 +164,7 @@ function trqRunScheduled_(daysAgo) {
       if (mapSh) mapSh.getRange(mapSh.getLastRow() + 1, 1, newRows.length, 2).setValues(newRows);
     }
 
-    var written = trq_writeResults_(ss, dateKey, trq_fetchModals_(cookies, jobs), false);
+    var written = trq_writeResults_(ss, dateKey, trq_fetchModals_(cookies, jobs), true);
     trq_markDone_(date, written.doneIds);
     report.ok = written.ok;
     report.skipped = written.skipped;
@@ -391,7 +391,7 @@ function trqToggleDailyTrigger() {
   ui.alert('毎日の自動取り込みを ON にしました（日本時間）。\n' +
     '・' + TRQ_CFG.MORNING_HOUR + '時台：前日の分\n' +
     '・' + TRQ_CFG.EVENING_HOUR + '時台：当日の分\n' +
-    'TRAQ に入力がある選手だけを取り込み、既にデータがある選手は上書きしません。\n' +
+    'TRAQ に入力がある選手だけを取り込み、既にデータがある場合は TRAQ の内容で上書きします。\n' +
     'エラーは「' + TRQ_CFG.LOG_SHEET + '」シートに残り、次にシートを開いたときにも表示されます。' + tzNote);
 }
 
