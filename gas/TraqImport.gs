@@ -64,7 +64,13 @@ var TRQ_CFG = {
   TIMEZONE: 'Asia/Tokyo',
 
   // UrlFetchApp.fetchAll に一度に渡すリクエスト数
-  FETCH_CHUNK: 30
+  FETCH_CHUNK: 30,
+
+  // カレンダーの program: 3 = 筋トレ（0 = 投球、1 = 打撃、4 = その他。筋トレ以外はポップアップが開けない）
+  STRENGTH_PROGRAM: 3,
+
+  // 中身の無いワークアウト（「Empty Work out」など）でポップアップが返すエラー
+  EMPTY_MODAL_ERROR: 'Data Input format is incorrect'
 };
 
 // 次にシートを開いたときに出すエラー文（ドキュメントプロパティに置く）
@@ -460,6 +466,7 @@ function trq_findWorkouts_(cookies, ids, date) {
     json.data.forEach(function (w) {
       var ex = w.athlete_exercises || [];
       if (String(w.start).slice(0, 10) !== ymd || !ex.length) return;   // 種目の無い予定（メモなど）は除く
+      if (Number(w.program) !== TRQ_CFG.STRENGTH_PROGRAM) return;        // 筋トレ以外（投球・打撃など）は除く
       f.total++;
       // 入力されると process と各種目の status が入る（ポップアップの値の有無と一致することを確認済み）
       var entered = w.process != null || ex.some(function (x) { return Number(x.status) !== 0; });
@@ -491,6 +498,7 @@ function trq_fetchModals_(cookies, jobs) {
   for (var k = 0; k < modals.length; k++) {
     var json;
     try { json = JSON.parse(modals[k].getContentText()); } catch (e) { json = null; }
+    if (json && json.failure && String(json.errors).indexOf(TRQ_CFG.EMPTY_MODAL_ERROR) >= 0) continue;   // 中身の無いワークアウト
     if (!json || !json.success || !json.data) {
       owner[k].note = 'ポップアップの取得に失敗しました（HTTP ' + modals[k].getResponseCode() + '）';
       continue;
