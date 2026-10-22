@@ -35,7 +35,8 @@
  * ■ 転記ルール
  *   種目   … Exercise をそのまま
  *   セット … 重量か回数のどちらかが入力されたセットの数
- *   レップ … Reps 列をそのまま（3e / 10e など）
+ *   レップ … 選手が入力したセットごとの回数。全セット同じなら「6」、違えば「6, 6, 4」のように並べる
+ *            （回数が空のセットは Reps 列の指示値を使う。指示値に e が付いていれば回数にも付ける）
  *   重量   … 入力されたセットの重量。数字なら kg を付け、空なら BW。
  *            セットごとに違えば「50kg, 55kg, 60kg」のように並べる
  *   1セットも入力されていない種目は「未実施」とみなして書きません。
@@ -630,9 +631,24 @@ function trq_toSheetRows_(exercises) {
       if (weights.indexOf(w) < 0) weights.push(w);
     });
 
-    rows.push([ex.exercise, done.length, trq_cellValue_(ex.reps), weights.join(', ')]);
+    rows.push([ex.exercise, done.length, trq_cellValue_(trq_repsText_(ex.reps, done)), weights.join(', ')]);
   });
   return rows;
+}
+
+
+/**
+ * レップ欄の文字列。入力された回数をセットごとに並べ、全部同じなら1つにまとめる。
+ * 回数が空のセットは指示値（Reps 列）で補う。指示値が「3e」のように英字付きなら、回数にも同じ英字を付ける。
+ */
+function trq_repsText_(planned, doneSets) {
+  var suffix = (String(planned).trim().match(/^\d+(?:\.\d+)?\s*([A-Za-z]+)$/) || [])[1] || '';
+  var vals = doneSets.map(function (s) {
+    var v = s.reps !== '' ? s.reps : String(planned).trim();
+    return (suffix && /^\d+(\.\d+)?$/.test(v)) ? v + suffix : v;
+  });
+  var same = vals.every(function (v) { return v === vals[0]; });
+  return same ? vals[0] : vals.join(', ');
 }
 
 
