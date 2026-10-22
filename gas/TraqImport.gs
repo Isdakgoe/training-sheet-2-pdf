@@ -755,18 +755,47 @@ function trq_writeLog_(ss, dateKey, report) {
   var sh = ss.getSheetByName(TRQ_CFG.LOG_SHEET);
   if (!sh) {
     sh = ss.insertSheet(TRQ_CFG.LOG_SHEET);
-    sh.getRange(1, 1, 1, 4).setValues([['実行日時', '対象日', '区分', '内容']]).setFontWeight('bold');
+    sh.getRange(1, 1, 1, 5).setValues([['実行日時', '対象日', '区分', '選手名', '内容']]).setFontWeight('bold');
     sh.setFrozenRows(1);
     sh.setColumnWidth(1, 150);
-    sh.setColumnWidth(4, 600);
+    sh.setColumnWidth(4, 160);
+    sh.setColumnWidth(5, 600);
+  } else if (sh.getRange(1, 4).getValue() === '内容') {
+    trq_splitLogColumn_(sh);   // 旧形式（内容が4列目だけ）のシートを、選手名・内容の2列に直す
   }
   var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm');
   var rows = [];
-  report.failed.forEach(function (s) { rows.push([now, "'" + dateKey, 'エラー', s]); });
-  report.ok.forEach(function (s) { rows.push([now, "'" + dateKey, '転記', s]); });
-  report.skipped.forEach(function (s) { rows.push([now, "'" + dateKey, '対象外', s]); });
-  if (!rows.length) rows.push([now, "'" + dateKey, '—', '入力のある選手はいませんでした']);
-  sh.getRange(sh.getLastRow() + 1, 1, rows.length, 4).setValues(rows);
+  function add(kind, s) { var p = trq_splitLogText_(s); rows.push([now, "'" + dateKey, kind, p[0], p[1]]); }
+  report.failed.forEach(function (s) { add('エラー', s); });
+  report.ok.forEach(function (s) { add('転記', s); });
+  report.skipped.forEach(function (s) { add('対象外', s); });
+  if (!rows.length) rows.push([now, "'" + dateKey, '—', '', '入力のある選手はいませんでした']);
+  sh.getRange(sh.getLastRow() + 1, 1, rows.length, 5).setValues(rows);
+}
+
+
+/** 「選手名：内容」「選手名（3種目）」の形の文字列を [選手名, 内容] に分ける。名前が無いもの（全体エラーなど）は名前を空にする */
+function trq_splitLogText_(s) {
+  s = String(s);
+  var m = s.match(/^(.+?)（(\d+種目)）$/);
+  if (m) return [m[1], m[2] + '転記'];
+  if (/^取り込み全体が止まりました：/.test(s)) return ['', s];
+  var k = s.indexOf('：');
+  return k < 0 ? ['', s] : [s.slice(0, k), s.slice(k + 1)];
+}
+
+
+/** 旧形式のログシート（実行日時・対象日・区分・内容）に「選手名」列を足し、既存の行も分ける */
+function trq_splitLogColumn_(sh) {
+  var last = sh.getLastRow();
+  sh.insertColumnAfter(3);
+  sh.getRange(1, 4, 1, 2).setValues([['選手名', '内容']]).setFontWeight('bold');
+  if (last >= 2) {
+    var vals = sh.getRange(2, 5, last - 1, 1).getValues().map(function (r) { return trq_splitLogText_(r[0]); });
+    sh.getRange(2, 4, vals.length, 2).setValues(vals);
+  }
+  sh.setColumnWidth(4, 160);
+  sh.setColumnWidth(5, 600);
 }
 
 
