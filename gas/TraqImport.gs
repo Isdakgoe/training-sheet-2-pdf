@@ -24,7 +24,7 @@
  *   選んだ選手ごとに B列の ID のカレンダーを開き、取得したデータを C列のタブへ書きます。
  *
  * ■ 毎朝の自動取り込み（メニュー「毎日の自動取り込みを ON/OFF」）
- *   毎朝 DAILY_HOUR 時台に「前日」の分を取り込みます。既にデータがある日付列は上書きしません。
+ *   毎朝 MORNING_HOUR 時台に「前日」、毎夕 EVENING_HOUR 時台に「当日」の分を取り込みます。既にデータがある日付列は上書きしません。
  *   TRAQ の全選手のカレンダーを見て、前日に入力がある選手だけを対象にします。
  *   次の場合はその選手を書かずにエラーとして残します:
  *     - 「TRAQ設定」に載っていない選手 … 「TRAQ設定」の末尾に名前と ID を追加（C列は空）
@@ -56,8 +56,10 @@ var TRQ_CFG = {
   // 自動取り込みの結果（エラーなど）を書き足していくシート
   LOG_SHEET: 'TRAQ取り込みログ',
 
-  // 毎朝の自動取り込みを走らせる時刻（0〜23時。分は Google 側で前後します）。前日の分を取り込む
-  DAILY_HOUR: 6,
+  // 自動取り込みを走らせる時刻（日本時間 0〜23時。分は Google 側で前後します）
+  MORNING_HOUR: 6,   // 前日の分を取り込む
+  EVENING_HOUR: 18,  // 当日の分を取り込む
+  TIMEZONE: 'Asia/Tokyo',
 
   // UrlFetchApp.fetchAll に一度に渡すリクエスト数
   FETCH_CHUNK: 30
@@ -91,14 +93,21 @@ function trqShowDialog() {
 }
 
 
+/** 時間主導トリガー（朝）から呼ばれる。前日の分を取り込む。以前のトリガーが残っていても動くよう名前は据え置き */
+function trqImportScheduled() { trqRunScheduled_(1); }
+
+/** 時間主導トリガー（夕）から呼ばれる。当日の分を取り込む */
+function trqImportEvening() { trqRunScheduled_(0); }
+
+
 /**
- * 時間主導トリガーから呼ばれる。前日に TRAQ へ入力がある選手だけを取り込み、既にデータがある選手は上書きしない。
+ * daysAgo 日前に TRAQ へ入力がある選手だけを取り込み、既にデータがある選手は上書きしない。
  * 画面が無いので結果は「TRAQ取り込みログ」シートに書き、エラーは次にシートを開いたときに知らせる。
  */
-function trqImportScheduled() {
+function trqRunScheduled_(daysAgo) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var date = new Date();
-  date.setDate(date.getDate() - 1);
+  date.setDate(date.getDate() - daysAgo);
   var dateKey = trq_dateKey_(date);
   var report = { ok: [], skipped: [], failed: [] };
   var lock = LockService.getDocumentLock();
@@ -362,7 +371,8 @@ function trqSyncAthletes() {
 function trqToggleDailyTrigger() {
   var ui = SpreadsheetApp.getUi();
   var mine = ScriptApp.getProjectTriggers().filter(function (t) {
-    return t.getHandlerFunction() === 'trqImportScheduled';
+    var h = t.getHandlerFunction();
+    return h === 'trqImportScheduled' || h === 'trqImportEvening';
   });
 
   if (mine.length) {
@@ -372,11 +382,17 @@ function trqToggleDailyTrigger() {
   }
 
   ScriptApp.newTrigger('trqImportScheduled')
-    .timeBased().everyDays(1).atHour(TRQ_CFG.DAILY_HOUR).create();
-  ui.alert('毎日の自動取り込みを ON にしました。\n' +
-    '毎朝 ' + TRQ_CFG.DAILY_HOUR + '時台に、前日に TRAQ へ入力がある選手の分を取り込みます' +
-    '（既にデータがある選手は上書きしません）。\n' +
-    'エラーは「' + TRQ_CFG.LOG_SHEET + '」シートに残り、次にシートを開いたときにも表示されます。');
+    .timeBased().inTimezone(TRQ_CFG.TIMEZONE).everyDays(1).atHour(TRQ_CFG.MORNING_HOUR).create();
+  ScriptApp.newTrigger('trqImportEvening')
+    .timeBased().inTimezone(TRQ_CFG.TIMEZONE).everyDays(1).atHour(TRQ_CFG.EVENING_HOUR).create();
+  var tzNote = Session.getScriptTimeZone() === TRQ_CFG.TIMEZONE ? '' :
+    '\n\n【注意】このスクリプトのタイムゾーンが ' + Session.getScriptTimeZone() + ' です。' +
+    '日付の判定がずれないよう、プロジェクトの設定で ' + TRQ_CFG.TIMEZONE + ' に変更してください。';
+  ui.alert('毎日の自動取り込みを ON にしました（日本時間）。\n' +
+    '・' + TRQ_CFG.MORNING_HOUR + '時台：前日の分\n' +
+    '・' + TRQ_CFG.EVENING_HOUR + '時台：当日の分\n' +
+    'TRAQ に入力がある選手だけを取り込み、既にデータがある選手は上書きしません。\n' +
+    'エラーは「' + TRQ_CFG.LOG_SHEET + '」シートに残り、次にシートを開いたときにも表示されます。' + tzNote);
 }
 
 
