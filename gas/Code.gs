@@ -126,6 +126,7 @@ var RPT_M = {
 function onOpen() {
   rptBuildMenu_();
   trqBuildMenu_();   // TraqImport.gs の「TRAQ取り込み」メニュー
+  try { trqShowPendingAlert_(); } catch (e) { /* 自動取り込みのエラー表示。出せなくてもメニューは出す */ }
 }
 
 

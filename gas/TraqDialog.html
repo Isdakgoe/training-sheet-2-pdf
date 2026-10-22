@@ -72,6 +72,17 @@
   .item .cnt { color: var(--muted); font-size: 11px; flex: none; }
   .item.off label { color: #AAAAAA; }
   .item.hidden { display: none; }
+  .item .badge {
+    display: none;
+    flex: none;
+    margin-right: 8px;
+    padding: 1px 6px;
+    font-size: 11px;
+    color: #1E7B34;
+    background: #E6F4EA;
+    border-radius: 8px;
+  }
+  .item.done .badge { display: inline; }
 
   #q {
     width: 100%;
@@ -107,7 +118,8 @@
 
 <div class="row">
   <h2>実施日</h2>
-  <input type="date" id="date" disabled>
+  <input type="date" id="date" disabled onchange="loadDone()">
+  <div class="sub">「取込済」はこの日に誰かが取り込み済みの選手です。チェックは外してあります（取り込み直すときだけチェック）。</div>
 </div>
 
 <div class="listhead">
@@ -173,12 +185,17 @@ function onInit(data) {
     lb.htmlFor = 'cb' + i;
     lb.textContent = a.sheet;
 
+    var badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.id = 'badge' + i;
+
     var cnt = document.createElement('span');
     cnt.className = 'cnt';
     cnt.textContent = a.traqName + '（' + a.id + '）';
 
     div.appendChild(cb);
     div.appendChild(lb);
+    div.appendChild(badge);
     div.appendChild(cnt);
     list.appendChild(div);
   });
@@ -189,6 +206,32 @@ function onInit(data) {
     document.getElementById('listsub').dataset.extra =
       '転載先タブ未設定の ' + data.unmapped + ' 人は表示していません。';
   }
+  applyDone(data.done);
+}
+
+// ---- 取り込み済みの表示：その日に誰かが取り込んだ選手に「取込済」を付け、チェックを外す ----
+var done = {};
+
+function loadDone() {
+  var date = document.getElementById('date').value;
+  if (!date || !athletes.length) return;
+  google.script.run
+    .withSuccessHandler(function (d) {
+      // 結果が返るまでに日付が変わっていたら捨てる
+      if (document.getElementById('date').value === date) applyDone(d);
+    })
+    .withFailureHandler(fail)
+    .trqGetDone(date);
+}
+
+function applyDone(d) {
+  done = d || {};
+  athletes.forEach(function (a, i) {
+    var t = done[a.id];
+    document.getElementById('item' + i).classList.toggle('done', !!t);
+    document.getElementById('badge' + i).textContent = t ? '取込済 ' + t : '';
+    if (t) document.getElementById('cb' + i).checked = false;
+  });
   refresh();
 }
 
@@ -206,17 +249,20 @@ function refresh() {
     if (c) on++;
   });
   var shown = athletes.filter(function (a) { return !a.hidden; }).length;
+  var nDone = athletes.filter(function (a) { return done[a.id]; }).length;
   var sub = document.getElementById('listsub');
   sub.textContent = on + ' 名を選択中' +
+    (nDone ? '（取込済 ' + nDone + ' 名）' : '') +
     (shown < athletes.length ? '（' + shown + ' / ' + athletes.length + ' 名を表示中）' : '') +
     (sub.dataset.extra ? ' ／ ' + sub.dataset.extra : '');
   document.getElementById('go').disabled = (on === 0);
 }
 
-// 絞り込み中は、表示されている選手だけを対象にする
+// 絞り込み中は、表示されている選手だけを対象にする。「すべて選択」は取込済の選手を選ばない
 function setAll(v) {
   athletes.forEach(function (a, i) {
-    if (!a.hidden) document.getElementById('cb' + i).checked = v;
+    if (a.hidden || (v && done[a.id])) return;
+    document.getElementById('cb' + i).checked = v;
   });
   refresh();
 }
@@ -242,6 +288,8 @@ function start() {
   var date = document.getElementById('date').value;
   if (!date) { setMsg('err', '日付を選んでください。'); return; }
   var ids = selectedIds();
+  // 「取込済」と分かった上で選んだ選手（取り込み直し）。これ以外で他の人が先に取り込んだ選手はサーバー側で飛ばす
+  var knownDone = ids.filter(function (id) { return done[id]; });
 
   busy(true, '既存データを確認しています…');
   google.script.run
@@ -253,9 +301,9 @@ function start() {
       }
       busy(true, 'TRAQ から取得してシートに書き込んでいます…（' + ids.length + ' 名）');
       google.script.run
-        .withSuccessHandler(function (report) { busy(false); setMsg('', report); })
+        .withSuccessHandler(function (report) { busy(false); setMsg('', report); loadDone(); })
         .withFailureHandler(fail)
-        .trqRunImport(date, ids, overwrite);
+        .trqRunImport(date, ids, overwrite, knownDone);
     })
     .withFailureHandler(fail)
     .trqCheckExisting(date, ids);
